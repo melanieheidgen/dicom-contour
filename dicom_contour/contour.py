@@ -232,10 +232,11 @@ def get_data(path, index):
             contours.append(contour_dict[k][1])
         # get data from dicom.read_file
         else:
-            img_arr = dicom.read_file(path + k + '.dcm').pixel_array
-            contour_arr = np.zeros_like(img_arr)
-            images.append(img_arr)
-            contours.append(contour_arr)
+            if (os.path.isfile(path + 'CT.' + k  + '.dcm')):
+                img_arr = dicom.read_file(path + 'CT.' + k + '.dcm').pixel_array
+                contour_arr = np.zeros_like(img_arr)
+                images.append(img_arr)
+                contours.append(contour_arr)
 
     return np.array(images), np.array(contours)
 
