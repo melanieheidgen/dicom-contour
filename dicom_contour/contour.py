@@ -85,7 +85,7 @@ def coord2pixels(contour_dataset, path):
     # extract the image id corresponding to given countour
     # read that dicom file
     img_ID = contour_dataset.ContourImageSequence[0].ReferencedSOPInstanceUID
-    img = dicom.read_file(path + img_ID + '.dcm')
+    img = dicom.read_file(path + 'CT.' + img_ID + '.dcm')
     img_arr = img.pixel_array
 
     # physical distance between the center of each pixel
