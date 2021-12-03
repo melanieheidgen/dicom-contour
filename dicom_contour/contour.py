@@ -7,6 +7,8 @@ import os
 import shutil
 import operator
 import warnings
+from operator import itemgetter
+from matplotlib.path import Path
 
 
 def get_smallest_dcm(path, ext='.dcm'):
@@ -16,20 +18,20 @@ def get_smallest_dcm(path, ext='.dcm'):
         path (str): path of the the directory that has DICOM files in it
         ext (str): extension of the DICOM files are defined with
      Return:
-        
+
     """
     fsize_dict = {f:os.path.getsize(path +f) for f in os.listdir(path)}
     for fname, size in [(k, fsize_dict[k]) for k in sorted(fsize_dict, key=fsize_dict.get, reverse=False)]:
         if ext in fname:
             return fname
-        
+
 def get_contour_file(path):
     """
-    Get contour file from a given path by searching for ROIContourSequence 
+    Get contour file from a given path by searching for ROIContourSequence
     inside dicom data structure.
     More information on ROIContourSequence available here:
     http://dicom.nema.org/medical/dicom/2016c/output/chtml/part03/sect_C.8.8.6.html
-    
+
     Inputs:
             path (str): path of the the directory that has DICOM files in it, e.g. folder of a single patient
     Return:
@@ -52,16 +54,16 @@ def get_contour_file(path):
 
 def get_roi_names(contour_data):
     """
-    This function will return the names of different contour data, 
+    This function will return the names of different contour data,
     e.g. different contours from different experts and returns the name of each.
     Inputs:
         contour_data (dicom.dataset.FileDataset): contour dataset, read by dicom.read_file
     Returns:
-        roi_seq_names (list): names of the 
+        roi_seq_names (list): names of the
     """
     roi_seq_names = [roi_seq.ROIName for roi_seq in list(contour_data.StructureSetROISequence)]
     return roi_seq_names
-    
+
 
 
 def coord2pixels(contour_dataset, path):
@@ -105,7 +107,7 @@ def coord2pixels(contour_dataset, path):
         cols.append(j)
     contour_arr = csc_matrix((np.ones_like(rows), (rows, cols)), dtype=np.int8, shape=(img_arr.shape[0], img_arr.shape[1])).toarray()
 
-    return img_arr, contour_arr, img_ID
+    return img_arr, contour_arr, img_ID, pixel_coords
 
 
 def cfile2pixels(file, path, ROIContourSeq=0):
@@ -131,12 +133,15 @@ def cfile2pixels(file, path, ROIContourSeq=0):
     # debug: there are multiple contours for the same image indepently
     # sum contour arrays and generate new img_contour_arrays
     contour_dict = defaultdict(int)
-    for im_arr, cntr_arr, im_id in img_contour_arrays:
+    for im_arr, cntr_arr, im_id, pixel_coords in img_contour_arrays:
         contour_dict[im_id] += cntr_arr
     image_dict = {}
-    for im_arr, cntr_arr, im_id in img_contour_arrays:
+    for im_arr, cntr_arr, im_id, pixel_coords in img_contour_arrays:
         image_dict[im_id] = im_arr
-    img_contour_arrays = [(image_dict[k], contour_dict[k], k) for k in image_dict]
+        pixel_coords_dict = defaultdict(list)
+    for im_arr, cntr_arr, im_id, pixel_coords in img_contour_arrays:
+        pixel_coords_dict[im_id].append(pixel_coords)
+    img_contour_arrays = [(image_dict[k], contour_dict[k], k, pixel_coords_dict[k]) for k in image_dict]
 
     return img_contour_arrays
 
@@ -201,8 +206,8 @@ def get_contour_dict(contour_file, path, index):
     contour_list = cfile2pixels(contour_file, path, index)
 
     contour_dict = {}
-    for img_arr, contour_arr, img_id in contour_list:
-        contour_dict[img_id] = [img_arr, contour_arr]
+    for img_arr, contour_arr, img_id, pixel_coords in contour_list:
+        contour_dict[img_id] = [img_arr, contour_arr, pixel_coords]
 
     return contour_dict
 
@@ -212,10 +217,11 @@ def get_data(path, index):
     Inputs:
         path (str): path of the the directory that has DICOM files in it
         contour_dict (dict): dictionary created by get_contour_dict
-        index (int): index of the 
+        index (int): index of the
     """
     images = []
     contours = []
+    pixel_coords = []
     # handle `/` missing
     if path[-1] != '/': path += '/'
     # get contour file
@@ -230,6 +236,7 @@ def get_data(path, index):
         if k in contour_dict:
             images.append(contour_dict[k][0])
             contours.append(contour_dict[k][1])
+            pixel_coords.append(contour_dict[k][2])
         # get data from dicom.read_file
         else:
             if (os.path.isfile(path + 'CT.' + k  + '.dcm')):
@@ -237,52 +244,27 @@ def get_data(path, index):
                 contour_arr = np.zeros_like(img_arr)
                 images.append(img_arr)
                 contours.append(contour_arr)
+                pixel_coords.append([])
 
-    return np.array(images), np.array(contours)
+    return np.array(images), np.array(contours), np.array(pixel_coords)
 
 
-def fill_contour(contour_arr):
-    # get initial pixel positions
-    pixel_positions = np.array([(i, j) for i, j in zip(np.where(contour_arr)[0], np.where(contour_arr)[1])])
+def fill_contour(contour_arr, pixel_coords):
 
-    # LEFT TO RIGHT SCAN
-    row_pixels = defaultdict(list)
-    for i, j in pixel_positions:
-        row_pixels[i].append((i, j))
+    for i in range(len(pixel_coords)):
+        pixel_positions = pixel_coords[i]
 
-    for i in row_pixels:
-        pixels = row_pixels[i]
-        j_pos = [j for i, j in pixels]
-        for j in range(min(j_pos), max(j_pos)):
-            row_pixels[i].append((i, j))
-    pixels = []
-    for k in row_pixels:
-        pix = row_pixels[k]
-        pixels.append(pix)
-    pixels = list(set([val for sublist in pixels for val in sublist]))
+        a,b  = np.shape(contour_arr)
+        x, y = np.meshgrid(np.arange(a), np.arange(b)) # make a canvas with coordinates
+        x, y = x.flatten(), y.flatten()
+        points = np.vstack((x,y)).T
 
-    rows, cols = zip(*pixels)
-    contour_arr[rows, cols] = 1
-
-    # TOP TO BOTTOM SCAN
-    pixel_positions = pixels  # new positions added
-    row_pixels = defaultdict(list)
-    for i, j in pixel_positions:
-        row_pixels[j].append((i, j))
-
-    for j in row_pixels:
-        pixels = row_pixels[j]
-        i_pos = [i for i, j in pixels]
-        for i in range(min(i_pos), max(i_pos)):
-            row_pixels[j].append((i, j))
-    pixels = []
-    for k in row_pixels:
-        pix = row_pixels[k]
-        pixels.append(pix)
-    pixels = list(set([val for sublist in pixels for val in sublist]))
-    rows, cols = zip(*pixels)
-    contour_arr[rows, cols] = 1
+        p = Path(pixel_positions) # make a polygon
+        grid = p.contains_points(points)
+        mask = grid.reshape(a,b) # now you have a mask with points inside a polygon
+        contour_arr[mask.transpose()] =1
     return contour_arr
+
 
 
 def create_image_mask_files(path, index, img_format='png'):
