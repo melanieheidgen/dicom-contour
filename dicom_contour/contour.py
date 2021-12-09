@@ -253,15 +253,19 @@ def fill_contour(contour_arr, pixel_coords):
 
     for i in range(len(pixel_coords)):
         pixel_positions = pixel_coords[i]
-
-        a,b  = np.shape(contour_arr)
-        x, y = np.meshgrid(np.arange(a), np.arange(b)) # make a canvas with coordinates
+        x_min = int(min(pixel_positions,key=itemgetter(0))[0])
+        x_max = int(max(pixel_positions,key=itemgetter(0))[0])
+        y_min = int(min(pixel_positions,key=itemgetter(1))[1])
+        y_max = int(max(pixel_positions,key=itemgetter(1))[1])
+        x, y = np.meshgrid(np.arange(x_max,x_max), np.arange(y_min,y_max)) # make a canvas with coordinates
         x, y = x.flatten(), y.flatten()
         points = np.vstack((x,y)).T
 
         p = Path(pixel_positions) # make a polygon
         grid = p.contains_points(points)
-        mask = grid.reshape(a,b) # now you have a mask with points inside a polygon
+        mask = grid.reshape(y_max-y_min,x_max-x_min) # now you have a mask with points inside a polygon
+        big_mask = np.zeros(np.shape(contour_arr),dtype=bool)
+        big_mask[y_min:y_max, x_min:x_max] = mask
         contour_arr[mask.transpose()] =1
     return contour_arr
 
